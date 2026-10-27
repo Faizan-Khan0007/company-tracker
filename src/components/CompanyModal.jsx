@@ -162,6 +162,8 @@ export function CompanyModal({ isOpen, onClose, onSave, editingCompany }) {
       pocs,
       resumeMeta: resumeRemoved ? null : resumeMeta,
       resumeLink: resumeLink.trim(),
+      createdAt: editingCompany?.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     onSave(companyData, {

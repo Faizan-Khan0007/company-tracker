@@ -13,9 +13,11 @@ import {
   loadCompanies,
   saveCompanies,
   resetToDefaultCompanies,
+  mergeCompaniesWithDefaults,
   exportToCSV,
   exportToJSON,
 } from "./utils/storage";
+import { parseCustomDate } from "./utils/dateHelper";
 import {
   saveResumeFile,
   deleteResumeFile,
@@ -28,6 +30,7 @@ import {
   deleteCompanyFromCloud,
   uploadResumeToCloud,
   downloadResumeFromCloud,
+  bulkSyncLocalToCloud,
 } from "./utils/supabaseClient";
 
 export function App() {
@@ -61,10 +64,18 @@ export function App() {
       setIsCloudActive(true);
       fetchCompaniesFromCloud()
         .then((remoteData) => {
-          if (remoteData && remoteData.length > 0) {
-            setCompanies(remoteData);
-            saveCompanies(remoteData);
-          }
+          setCompanies((prev) => {
+            // NEVER let an incomplete cloud database wipe out the rest of your 30 companies!
+            const merged = mergeCompaniesWithDefaults([...(remoteData || []), ...prev]);
+            saveCompanies(merged);
+
+            // If remote database only had 1 or a few entries (like just Wayfair),
+            // auto-sync the full list to Supabase so everything is synchronized!
+            if (remoteData && remoteData.length < merged.length) {
+              bulkSyncLocalToCloud(merged).catch(console.error);
+            }
+            return merged;
+          });
         })
         .catch((err) => {
           console.warn("Could not sync with cloud on startup:", err.message);
@@ -270,8 +281,9 @@ export function App() {
 
   // Cloud sync callback when data loaded from remote
   const handleCloudDataSynced = (remoteList) => {
-    setCompanies(remoteList);
-    saveCompanies(remoteList);
+    const merged = mergeCompaniesWithDefaults(remoteList);
+    setCompanies(merged);
+    saveCompanies(merged);
     setIsCloudActive(true);
     showToast("Synchronized with Cloud Database!");
   };
@@ -341,19 +353,31 @@ export function App() {
         return true;
       })
       .sort((a, b) => {
-        let comparison = 0;
         if (sortBy === "company") {
-          comparison = (a.company || "").localeCompare(b.company || "");
+          const comp = (a.company || "").localeCompare(b.company || "");
+          return sortOrder === "asc" ? comp : -comp;
         } else if (sortBy === "priority") {
           const priorityWeights = { high: 3, medium: 2, low: 1 };
-          comparison = (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+          const comp = (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+          return sortOrder === "asc" ? -comp : comp;
         } else if (sortBy === "contacted") {
-          comparison = (Number(b.contacted) || 0) - (Number(a.contacted) || 0);
+          const comp = (Number(b.contacted) || 0) - (Number(a.contacted) || 0);
+          return sortOrder === "asc" ? -comp : comp;
         } else {
-          // Date sorting
-          comparison = (b.date || "").localeCompare(a.date || "");
+          // Date sorting (Chronological: latest date always on top)
+          const dateA = parseCustomDate(a.date);
+          const dateB = parseCustomDate(b.date);
+          let comp = 0;
+          if (dateA !== dateB) {
+            comp = dateB - dateA;
+          } else {
+            // Tie-breaker: newest creation timestamp on top
+            const timeA = new Date(a.createdAt || a.updated_at || 0).getTime();
+            const timeB = new Date(b.createdAt || b.updated_at || 0).getTime();
+            comp = timeB - timeA;
+          }
+          return sortOrder === "asc" ? -comp : comp;
         }
-        return sortOrder === "asc" ? comparison : -comparison;
       });
   }, [companies, searchQuery, activeFilterChip, selectedStage, sortBy, sortOrder]);
 

@@ -1,22 +1,57 @@
 import { INITIAL_COMPANIES } from "../data/initialCompanies";
+import { sortCompaniesByDateDesc } from "./dateHelper";
 
 const STORAGE_KEY = "careerpulse_company_tracker_v1";
+
+/**
+ * Merges a list of companies with the default initial 30 companies.
+ * Ensures user modifications (like attached resumes) are preserved,
+ * while NEVER wiping out the default companies.
+ */
+export function mergeCompaniesWithDefaults(list) {
+  const map = new Map();
+
+  // 1. Preload defaults
+  for (const c of INITIAL_COMPANIES) {
+    if (c && c.id) map.set(c.id, { ...c });
+  }
+
+  // 2. Overlay incoming list (custom user updates, new companies, attached resumes)
+  if (Array.isArray(list)) {
+    for (const c of list) {
+      if (c && c.id) {
+        const existing = map.get(c.id);
+        map.set(c.id, { ...existing, ...c });
+      }
+    }
+  }
+
+  const merged = Array.from(map.values());
+  // Sort descending by date so latest is on top
+  return merged.sort(sortCompaniesByDateDesc);
+}
 
 export function loadCompanies() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      saveCompanies(INITIAL_COMPANIES);
-      return INITIAL_COMPANIES;
+      const sorted = [...INITIAL_COMPANIES].sort(sortCompaniesByDateDesc);
+      saveCompanies(sorted);
+      return sorted;
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed;
+      // Merge with defaults so no initial applications are accidentally lost!
+      const merged = mergeCompaniesWithDefaults(parsed);
+      saveCompanies(merged);
+      return merged;
     }
   } catch (err) {
     console.error("Failed to load companies from localStorage:", err);
   }
-  return INITIAL_COMPANIES;
+  const fallback = [...INITIAL_COMPANIES].sort(sortCompaniesByDateDesc);
+  saveCompanies(fallback);
+  return fallback;
 }
 
 export function saveCompanies(companies) {
@@ -28,8 +63,9 @@ export function saveCompanies(companies) {
 }
 
 export function resetToDefaultCompanies() {
-  saveCompanies(INITIAL_COMPANIES);
-  return INITIAL_COMPANIES;
+  const sorted = [...INITIAL_COMPANIES].sort(sortCompaniesByDateDesc);
+  saveCompanies(sorted);
+  return sorted;
 }
 
 export function exportToCSV(companies) {
